@@ -99,6 +99,39 @@ if df is None:
 st.divider()
 
 # ─────────────────────────────────────────────
+# FILTRAGEM INICIAL - REDUZIR TAMANHO PARA ARQUIVOS GRANDES
+# ─────────────────────────────────────────────
+st.subheader("🎯 Selecione uma amostra dos dados")
+
+tamanho_original = len(df)
+
+# Se arquivo for grande, ofereça opções de amostra
+if tamanho_original > 100000:
+    col_amostra1, col_amostra2 = st.columns(2)
+    
+    with col_amostra1:
+        usar_amostra = st.checkbox(
+            "📊 Usar amostra (reduz memória para arquivos grandes)",
+            value=True,
+            help="Para arquivos >100k linhas, recomenda-se selecionar uma amostra"
+        )
+    
+    with col_amostra2:
+        if usar_amostra:
+            percentual = st.slider(
+                "% de dados para análise",
+                min_value=1,
+                max_value=100,
+                value=25,
+                step=5,
+                help="Quanto maior o percentual, mais memória será usada"
+            )
+            df = df.sample(frac=percentual/100, random_state=42)
+            st.info(f"📈 Usando {percentual}% dos dados: {len(df):,} registros (de {tamanho_original:,} originais)")
+
+st.divider()
+
+# ─────────────────────────────────────────────
 # BARRA LATERAL — FILTROS
 # ─────────────────────────────────────────────
 st.sidebar.header("⚙️ Filtros")
