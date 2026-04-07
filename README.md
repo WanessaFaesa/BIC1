@@ -93,8 +93,6 @@ covid19_kdd/
 ├── requirements.txt            # 📦 Dependências Python
 ├── MICRODADOS.csv             # 📊 Dataset (não incluído, faça upload)
 ├── analise_covid19.ipynb      # 📓 Notebook de análise
-├── GUIA_PUBLICACAO.md         # 📝 Guia de publicação
-├── PUBLICACAO_COM_UPLOAD.md   # 📝 Guia com suporte a upload
 └── README.md                   # 📋 Este arquivo
 ```
 
