@@ -32,21 +32,19 @@ st.markdown("""
 st.divider()
 
 # ─────────────────────────────────────────────
-# CARREGAMENTO DOS DADOS (cache para performance)
+# CARREGAMENTO DOS DADOS (SEM CACHE PARA EVITAR ERRO COM ARQUIVOS GRANDES)
 # ─────────────────────────────────────────────
-@st.cache_data
-def carregar_dados_chunked(caminho_ou_buffer, nome_arquivo="arquivo", usar_amostra=True) -> pd.DataFrame:
+def carregar_dados_chunked(caminho_ou_buffer, nome_arquivo="arquivo", usar_amostra=False) -> pd.DataFrame:
     """
     Lê CSV em chunks para lidar com arquivos grandes (>1GB).
-    Processa e concatena gradualmente para economizar memória.
+    SEM CACHE para evitar erro ao serializar dados grandes.
     """
-    st.info("📂 Processando arquivo... (pode levar alguns segundos)")
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     chunks = []
     total_linhas = 0
-    chunk_size = 10000  # Processa 10k linhas por vez
+    chunk_size = 50000  # Aumentado para 50k = mais rápido
     chunk_num = 0
     
     try:
@@ -60,19 +58,20 @@ def carregar_dados_chunked(caminho_ou_buffer, nome_arquivo="arquivo", usar_amost
             sep=';',
             encoding='latin-1',
             low_memory=False,
-            chunksize=chunk_size
+            chunksize=chunk_size,
+            on_bad_lines='skip'  # Ignora linhas malformadas
         ):
             chunk_num += 1
             total_linhas += len(chunk)
             
             # Atualiza barra de progresso
-            progress = min(chunk_num * chunk_size / 1000000, 0.9)  # Max 90%
+            progress = min(chunk_num / 100, 0.95)  # Max 95%
             progress_bar.progress(progress)
             status_text.text(f"✓ Lidas {total_linhas:,} linhas...")
             
             # Se usar amostra e já leu o suficiente, pare
-            if usar_amostra and chunk_num > 50:  # ~500k linhas
-                status_text.text(f"⚠️ Usando amostra dos primeiros {total_linhas:,} registros")
+            if usar_amostra and total_linhas > 500000:  # Máx 500k
+                status_text.text(f"⏹️ Usando amostra dos primeiros {total_linhas:,} registros")
                 break
             
             chunks.append(chunk)
@@ -94,35 +93,26 @@ def carregar_dados_chunked(caminho_ou_buffer, nome_arquivo="arquivo", usar_amost
             None
         )
         if col_data:
-            dados['data_convertida'] = pd.to_datetime(
-                dados[col_data], 
-                errors='coerce', 
-                dayfirst=True
-            )
-            dados['ano_mes'] = dados['data_convertida'].dt.to_period('M').astype(str)
+            try:
+                dados['data_convertida'] = pd.to_datetime(
+                    dados[col_data], 
+                    errors='coerce', 
+                    dayfirst=True
+                )
+                dados['ano_mes'] = dados['data_convertida'].dt.to_period('M').astype(str)
+            except:
+                pass  # Se falhar, continua sem coluna de data
         
         return dados
         
+    except MemoryError:
+        st.error("❌ Arquivo muito grande para memória disponível")
+        st.info("💡 Tente: 1) Usar percentual menor, 2) Comprimir arquivo em ZIP, 3) Dividir em partes")
+        return None
     except Exception as e:
         st.error(f"❌ Erro ao ler arquivo: {str(e)}")
         status_text.empty()
         return None
-
-# ─────────────────────────────────────────────
-# FUNÇÃO ORIGINAL (MANTIDA PARA COMPATIBILIDADE)
-# ─────────────────────────────────────────────
-@st.cache_data
-def carregar_dados(caminho_ou_buffer, nome_arquivo="arquivo") -> pd.DataFrame:
-    """Lê o CSV e faz conversões básicas."""
-    dados = pd.read_csv(caminho_ou_buffer, sep=';', encoding='latin-1', low_memory=False)
-
-    # Tenta converter data de notificação
-    col_data = next((c for c in dados.columns if 'ata' in c.lower() and 'otifica' in c.lower()), None)
-    if col_data:
-        dados['data_convertida'] = pd.to_datetime(dados[col_data], errors='coerce', dayfirst=True)
-        dados['ano_mes'] = dados['data_convertida'].dt.to_period('M').astype(str)
-
-    return dados
 
 # ─────────────────────────────────────────────
 # SEÇÃO DE UPLOAD E CARREGAMENTO
@@ -148,27 +138,42 @@ df = None
 
 if opcao_dados == "📁 Usar arquivo local (MICRODADOS.csv)" and arquivo_local_existe:
     try:
-        df = carregar_dados(CAMINHO_CSV)
-        st.success(f"✅ Dataset local carregado: **{len(df):,} registros** × {df.shape[1]} colunas")
+        with st.spinner("📂 Carregando arquivo local..."):
+            df = carregar_dados_chunked(CAMINHO_CSV, usar_amostra=False)
+        if df is not None:
+            st.success(f"✅ Dataset local carregado: **{len(df):,} registros** × {df.shape[1]} colunas")
     except Exception as e:
         st.error(f"❌ Erro ao carregar arquivo local: {str(e)}")
 
 elif opcao_dados == "⬆️ Fazer upload de novo arquivo":
+    st.info("💡 **Dica:** Para arquivos muito grandes (>1GB), comprima em ZIP ou divida em partes")
+    
     arquivo_upload = st.file_uploader(
         "Selecione um arquivo CSV (MICRODADOS.csv)",
         type="csv",
-        help="Arquivo deve estar em formato CSV com separador ';' e encoding 'latin-1' (suporta até 2GB)"
+        help="Arquivo pode estar em formato CSV com separador ';' e encoding 'latin-1'"
     )
     
     if arquivo_upload is not None:
-        try:
-            # Para upload, usar processamento em chunks
-            df = carregar_dados_chunked(arquivo_upload, arquivo_upload.name, usar_amostra=True)
-            if df is not None:
-                st.success(f"✅ Arquivo '{arquivo_upload.name}' carregado: **{len(df):,} registros** × {df.shape[1]} colunas")
-        except Exception as e:
-            st.error(f"❌ Erro ao processar arquivo: {str(e)}")
-            st.info("💡 Para arquivos muito grandes (>2GB), tente comprimir em ZIP ou dividir em partes")
+        col_botao1, col_botao2 = st.columns(2)
+        
+        with col_botao1:
+            usar_amostra_upload = st.checkbox(
+                "Usar apenas amostra (~500k linhas)",
+                value=True,
+                help="Reduz muito a memória usada"
+            )
+        
+        with col_botao2:
+            if st.button("▶️ Processar arquivo", use_container_width=True):
+                st.info("🔄 Processando... aguarde")
+                df = carregar_dados_chunked(arquivo_upload, arquivo_upload.name, usar_amostra=usar_amostra_upload)
+                
+                if df is not None:
+                    st.success(f"✅ Arquivo carregado com sucesso!")
+                    st.success(f"📊 {len(df):,} registros × {df.shape[1]} colunas prontos para análise")
+                else:
+                    st.error("❌ Não foi possível carregar o arquivo")
 
 # Se nenhum arquivo foi carregado, parar
 if df is None:
